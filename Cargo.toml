@@ -10,7 +10,7 @@ readme = "README.md"
 keywords = ["wayland", "keyboard", "mouse", "accessibility", "navigation"]
 categories = ["command-line-utilities", "accessibility"]
 authors = ["Stephen Waits <steve@waits.net>"]
-rust-version = "1.75"
+rust-version = "1.85"
 
 [dependencies]
 anyhow = "1.0"

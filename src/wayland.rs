@@ -647,7 +647,10 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandState {
             } => {
                 // Ignore bare modifier press events; we track modifiers via
                 // the Modifiers event instead.
-                if matches!(key, KEY_LSHIFT | KEY_RSHIFT | KEY_LCTRL | KEY_RCTRL | KEY_LALT | KEY_RALT) {
+                if matches!(
+                    key,
+                    KEY_LSHIFT | KEY_RSHIFT | KEY_LCTRL | KEY_RCTRL | KEY_LALT | KEY_RALT
+                ) {
                     return;
                 }
                 // Ctrl-[ acts as Escape (evdev keycode 26 = '[').
