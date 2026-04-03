@@ -1,0 +1,21 @@
+[package]
+name = "mousefree"
+version = "1.0.0"
+edition = "2021"
+license = "MIT"
+description = "Keyboard-driven mouse navigation for Wayland"
+repository = "https://github.com/swaits/mousefree"
+homepage = "https://github.com/swaits/mousefree"
+readme = "README.md"
+keywords = ["wayland", "keyboard", "mouse", "accessibility", "navigation"]
+categories = ["command-line-utilities", "accessibility"]
+authors = ["Stephen Waits <steve@waits.net>"]
+rust-version = "1.75"
+
+[dependencies]
+anyhow = "1.0"
+wayland-client = "0.31"
+wayland-protocols-wlr = { version = "0.3", features = ["client"] }
+tempfile = "3"
+fontdue = "0.9"
+tiny-skia = "0.12.0"
