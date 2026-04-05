@@ -43,6 +43,8 @@ const MOD_ALT: u32 = 8;
 
 // Drag animation timing.
 const DRAG_SETTLE_MS: u64 = 25;
+const DRAG_FOCUS_CLICK_HOLD_MS: u64 = 50;
+const DRAG_FOCUS_CLICK_PAUSE_MS: u64 = 500;
 const DRAG_PRESS_SETTLE_MS: u64 = 60;
 const DRAG_INTERP_STEPS: u32 = 12;
 const DRAG_STEP_DELAY_MS: u64 = 2;
@@ -311,10 +313,22 @@ impl WaylandBackend {
         self.teardown_surface()?;
         let (sw, sh) = (self.state.screen_w, self.state.screen_h);
 
-        // 1. Move to the drag origin and let focus settle.
+        // 1. Click at the drag origin to activate/focus the target window.
+        //    Without this, apps like zellij ignore the drag because the
+        //    surface isn't activated yet.
         self.send_motion(x1, y1, sw, sh)?;
         self.roundtrip("motion to drag start")?;
         sleep(Duration::from_millis(DRAG_SETTLE_MS));
+
+        self.send_button(BTN_LEFT, ButtonState::Pressed)?;
+        self.roundtrip("focus click press")?;
+        sleep(Duration::from_millis(DRAG_FOCUS_CLICK_HOLD_MS));
+        self.send_button(BTN_LEFT, ButtonState::Released)?;
+        self.roundtrip("focus click release")?;
+
+        // Wait past the double-click window so the focus click and the
+        // upcoming press-and-hold are never interpreted as a double-click.
+        sleep(Duration::from_millis(DRAG_FOCUS_CLICK_PAUSE_MS));
 
         // 2. Press and hold — give the app time to register the press.
         self.send_button(BTN_LEFT, ButtonState::Pressed)?;
