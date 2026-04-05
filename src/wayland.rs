@@ -41,12 +41,16 @@ const MOD_SHIFT: u32 = 1;
 const MOD_CTRL: u32 = 4;
 const MOD_ALT: u32 = 8;
 
-// Drag animation timing (~150ms total).
+// Drag animation timing.
 const DRAG_SETTLE_MS: u64 = 25;
-const DRAG_PRESS_SETTLE_MS: u64 = 30;
+const DRAG_PRESS_SETTLE_MS: u64 = 60;
 const DRAG_INTERP_STEPS: u32 = 12;
-const DRAG_STEP_DELAY_MS: u64 = 5;
-const DRAG_RELEASE_SETTLE_MS: u64 = 35;
+const DRAG_STEP_DELAY_MS: u64 = 2;
+const DRAG_RELEASE_SETTLE_MS: u64 = 60;
+
+// Click timing — mirrors the drag pattern for reliable event delivery.
+const CLICK_SETTLE_MS: u64 = 25;
+const CLICK_INTER_MS: u64 = 30;
 
 // Maximum number of event loop iterations to wait for a key release before
 // giving up.  Prevents an infinite hang if the compositor drops the event.
@@ -318,27 +322,36 @@ impl WaylandBackend {
         sleep(Duration::from_millis(DRAG_PRESS_SETTLE_MS));
 
         // 3. Animate the pointer from start to end so apps see continuous
-        //    motion and cross their drag threshold.
-        let step_delay = Duration::from_millis(DRAG_STEP_DELAY_MS);
-        for i in 1..=DRAG_INTERP_STEPS {
-            let t = i as f64 / DRAG_INTERP_STEPS as f64;
-            let x = x1 as f64 + (x2 as f64 - x1 as f64) * t;
-            let y = y1 as f64 + (y2 as f64 - y1 as f64) * t;
-            let cx = (x.clamp(0.0, sw.saturating_sub(1) as f64)) as u32;
-            let cy = (y.clamp(0.0, sh.saturating_sub(1) as f64)) as u32;
-            self.send_motion(cx, cy, sw, sh)?;
-            self.state
-                .conn
-                .flush()
-                .context("flush during drag motion")?;
-            sleep(step_delay);
-        }
-        self.roundtrip("motion to drag end")?;
-        sleep(Duration::from_millis(DRAG_RELEASE_SETTLE_MS));
+        //    motion and cross their drag threshold.  Errors are captured so
+        //    the button release in step 4 always executes.
+        let drag_result = (|| -> Result<()> {
+            let step_delay = Duration::from_millis(DRAG_STEP_DELAY_MS);
+            for i in 1..=DRAG_INTERP_STEPS {
+                let t = i as f64 / DRAG_INTERP_STEPS as f64;
+                let x = x1 as f64 + (x2 as f64 - x1 as f64) * t;
+                let y = y1 as f64 + (y2 as f64 - y1 as f64) * t;
+                let cx = (x.clamp(0.0, sw.saturating_sub(1) as f64)) as u32;
+                let cy = (y.clamp(0.0, sh.saturating_sub(1) as f64)) as u32;
+                self.send_motion(cx, cy, sw, sh)?;
+                self.state
+                    .conn
+                    .flush()
+                    .context("flush during drag motion")?;
+                sleep(step_delay);
+            }
+            // Land exactly on the drop target and confirm the compositor
+            // has processed the final position before we release.
+            self.send_motion(x2, y2, sw, sh)?;
+            self.roundtrip("motion to drag end")?;
+            sleep(Duration::from_millis(DRAG_RELEASE_SETTLE_MS));
+            Ok(())
+        })();
 
-        // 4. Release the button at the destination.
+        // 4. Always release the button, even if the animation failed.
         self.send_button(BTN_LEFT, ButtonState::Released)?;
-        self.roundtrip("release at drag end")
+        self.roundtrip("release at drag end")?;
+
+        drag_result
     }
 
     // -- Scroll -------------------------------------------------------------
@@ -392,6 +405,11 @@ impl WaylandBackend {
         }
         self.state.conn.flush().context("flush vp destroy")?;
 
+        // Ensure the compositor has fully processed the VP destruction
+        // (which implicitly releases all held buttons) before tearing
+        // down the surface.
+        self.roundtrip("vp destroy")?;
+
         self.teardown_surface()
     }
 
@@ -416,21 +434,25 @@ impl WaylandBackend {
     /// virtual pointer to `(x, y)`, then sends `count` press/release pairs
     /// on `button`.
     fn click_at(&mut self, x: u32, y: u32, button: u32, count: u32) -> Result<()> {
+        use std::thread::sleep;
+        use std::time::Duration;
+
         self.teardown_surface()?;
 
+        // Move to the target and let focus settle on the underlying window.
         self.send_motion(x, y, self.state.screen_w, self.state.screen_h)?;
         self.roundtrip("motion before click")?;
+        sleep(Duration::from_millis(CLICK_SETTLE_MS));
 
-        if let Some(vp) = &self.state.virtual_pointer {
-            for _ in 0..count {
-                let ts = timestamp();
-                vp.button(ts, button, ButtonState::Pressed);
-                vp.frame();
-                vp.button(ts, button, ButtonState::Released);
-                vp.frame();
-            }
+        for _ in 0..count {
+            self.send_button(button, ButtonState::Pressed)?;
+            self.roundtrip("click press")?;
+            sleep(Duration::from_millis(CLICK_INTER_MS));
+
+            self.send_button(button, ButtonState::Released)?;
+            self.roundtrip("click release")?;
         }
-        self.roundtrip("click")
+        Ok(())
     }
 
     fn scroll(&mut self, axis: Axis, value: f64, discrete: i32) -> Result<()> {
